@@ -2,30 +2,34 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.decomposition import NMF
-import numpy as np
-
 def build_rating_matrix(train_file):
     df = pd.read_csv(train_file)
+
     unique_users = sorted(df["userId"].unique())
     unique_movies = sorted(df["movieId"].unique())
-    user_map = {uid: i for i, uid in enumerate(unique_users)}
+    user_map  = {uid: i for i, uid in enumerate(unique_users)}
     movie_map = {mid: j for j, mid in enumerate(unique_movies)}
-    
-    n_users = len(user_map)
+
+    n_users  = len(user_map)
     n_movies = len(movie_map)
+
+    # --- weighted strategy calculation ---
+    user_means  = df.groupby("userId")["rating"].mean()
+    movie_means = df.groupby("movieId")["rating"].mean()
+    u_means = user_means.reindex(unique_users).values
+    m_means = movie_means.reindex(unique_movies).values
     
-    # Fill with GLOBAL mean, not user mean (less biased for NMF)
-    global_mean = df["rating"].mean()
-    Z = np.full((n_users, n_movies), global_mean, dtype=np.float32)
-    mask = np.zeros((n_users, n_movies), dtype=bool)  # True = real rating
-    
+    # Fill with average of user and movie means
+    Z = (0.5 * u_means[:, np.newaxis] + 0.5 * m_means[np.newaxis, :]).astype(np.float32)
+
+    # --- stamp real ratings on top ---
+    mask = np.zeros((n_users, n_movies), dtype=bool)
     for row in df.itertuples():
         i = user_map[row.userId]
         j = movie_map[row.movieId]
-        Z[i, j] = row.rating
+        Z[i, j]    = row.rating
         mask[i, j] = True
-    
+
     return Z, mask, user_map, movie_map
 
 # def build_rating_matrix(train_file, weight_user=0.5):

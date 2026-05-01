@@ -5,39 +5,64 @@ from modules.helper_functions import build_rating_matrix
 from sklearn.metrics import mean_squared_error
 from sklearn.decomposition import TruncatedSVD
 
-def find_optimal_r(train_file, r_candidates=[5, 10, 20, 30, 50]):
-    Z, mask, user_map, movie_map = build_rating_matrix(train_file)
+def find_optimal_r(train_file, r_candidates=[20, 25, 30]):
+    best_overall = {"rmse": float("inf")}
     
+    Z, real_mask, user_map, movie_map = build_rating_matrix(train_file)
+
+    # --- split REAL ratings into train / val ---
     np.random.seed(42)
-    # Only sample from REAL ratings for validation
-    real_indices = np.argwhere(mask)
-    val_idx = real_indices[np.random.choice(len(real_indices), 
-                           size=int(0.15 * len(real_indices)), replace=False)]
-    
-    val_mask = np.zeros_like(mask)
-    for i, j in val_idx:
-        val_mask[i, j] = True
-    
-    train_mask = mask & ~val_mask
+    real_idx   = np.argwhere(real_mask)
+    n_val      = int(0.15 * len(real_idx))
+    val_choice = np.random.choice(len(real_idx), size=n_val, replace=False)
+    val_idx    = real_idx[val_choice]
+
+    # Build Z_train
     Z_train = Z.copy()
-    # Hide validation ratings with global mean
-    Z_train[val_mask] = Z[mask].mean()
-    
+    Z_fill_only = _fill_only(train_file, user_map, movie_map)
+
+    for i, j in val_idx:
+        Z_train[i, j] = Z_fill_only[i, j]
+
+    actual = Z[val_idx[:, 0], val_idx[:, 1]]
+
+    print(f"\nStrategy: weighted")
+    print(f"{'r':<5} | {'Val RMSE':<12}")
+    print("-" * 22)
+
     for r in r_candidates:
-        Z_approx, _, _ = train_masked_nmf(Z_train, train_mask, n_components=r)
-        predicted = np.clip(Z_approx[val_mask], 0.5, 5.0)
-        actual = Z[val_mask]
-        rmse = np.sqrt(mean_squared_error(actual, predicted))
-        print(f"r={r:<4} RMSE={rmse:.4f}")
+        model   = NMF(n_components=r, init="random", random_state=0, max_iter=10_000)
+        W       = model.fit_transform(Z_train)
+        H       = model.components_
+        Z_approx = np.dot(W, H)
+        predicted = np.clip(Z_approx[val_idx[:, 0], val_idx[:, 1]], 1, 5)
+        rmse    = np.sqrt(mean_squared_error(actual, predicted))
+        print(f"{r:<5} | {rmse:.4f}")
+
+        if rmse < best_overall["rmse"]:
+            best_overall = {"rmse": rmse, "r": r, "strategy": "weighted"}
+
+    print("\n" + "=" * 40)
+    print(f"BEST → strategy={best_overall['strategy']}, r={best_overall['r']}, RMSE={best_overall['rmse']:.4f}")
+    return best_overall["r"]
+
+
+def _fill_only(train_file, user_map, movie_map):
+    df = pd.read_csv(train_file)
+    unique_users  = sorted(user_map,  key=user_map.get)
+    unique_movies = sorted(movie_map, key=movie_map.get)
+    
+    u_means = df.groupby("userId")["rating"].mean().reindex(unique_users).values
+    m_means = df.groupby("movieId")["rating"].mean().reindex(unique_movies).values
+    return (0.5 * u_means[:, np.newaxis] + 0.5 * m_means[np.newaxis, :]).astype(np.float32)
+
 
 def train_nmf_model(train_file, n_components):
-    Z, user_map, movie_map = build_rating_matrix(train_file)
-
-    model = NMF(n_components, init='random', random_state=0, max_iter=1000000)
-    W = model.fit_transform(Z)
-    H = model.components_
-    Z_approx = np.dot(W, H)
-
+    Z, _, user_map, movie_map = build_rating_matrix(train_file)
+    model    = NMF(n_components=n_components, init="random", random_state=0, max_iter=10_000)
+    W        = model.fit_transform(Z)
+    H        = model.components_
+    Z_approx = np.clip(np.dot(W, H), 1, 5)
     return Z_approx, user_map, movie_map
 
 def train_masked_nmf(Z, mask, n_components=20, n_iter=50):

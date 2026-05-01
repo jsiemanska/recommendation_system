@@ -48,7 +48,7 @@ def main():
     if mode == "train":
         print("Training mode activated (NMF).")
 
-        r = find_optimal_r(args.train_file, r_candidates=[15,20,30])
+        r = find_optimal_r(args.train_file, r_candidates=[26,27,28,29])
         Z_approx, user_map, movie_map = train_nmf_model(args.train_file, r)
 
         model_data = {
@@ -85,7 +85,34 @@ def main():
 
         print(f"Predictions saved to {args.output_file}")
 
-        rmse, mae, r2 = check_ratings(args.output_file)
+        rmse, mae, r2 = check_ratings(args.output_file, mode = "predict")
+
+        print(f"Rating statistics for {args.output_file}:")
+        print(f"RMSE: {rmse:.4f}")
+        print(f"MAE: {mae:.4f}")
+        print(f"R^2: {r2:.4f}")
+    elif mode == "validate":
+        print("Validation mode activated (NMF).")
+
+        if not os.path.exists(args.model_path):
+            print("Model file does not exist. Please run training first.")
+            return
+
+        with open(args.model_path, "rb") as f:
+            model_data = pickle.load(f)
+
+        predictions = predict_nmf(args.input_file, model_data)
+
+        os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
+
+        with open(args.output_file, "w") as f:
+            f.write("userId,movieId,rating\n")
+            for row in predictions:
+                f.write(f"{row['userId']},{row['movieId']},{row['rating']}\n")
+
+        print(f"Predictions saved to {args.output_file}")
+
+        rmse, mae, r2 = check_ratings(args.output_file, mode = "validate")
 
         print(f"Rating statistics for {args.output_file}:")
         print(f"RMSE: {rmse:.4f}")
