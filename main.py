@@ -34,14 +34,14 @@ def main():
         print(f"Training mode activated ({alg}).")
 
         if alg == "NMF":
-            r= find_optimal_r(args.train_file, r_candidates=[29])
-            Z_approx, user_map, movie_map = train_nmf_model(args.train_file, r)
+            r= find_optimal_r(args.train_file, r_candidates=[25])
+            Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_nmf_model(args.train_file, r)
 
         elif alg == "SVD1":
-            r= find_optimal_r_svd1(args.train_file, r_candidates=[50])
-            Z_approx, user_map, movie_map = train_svd1_model(args.train_file, r)
+            r= find_optimal_r_svd1(args.train_file, r_candidates=[50,55,60])
+            Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_svd1_model(args.train_file, r)
 
-        model_data = {"Z_approx": Z_approx, "user_map": user_map, "movie_map": movie_map}
+        model_data = {"Z_approx": Z_approx, "user_map": user_map, "movie_map": movie_map, "user_means": user_means, "movie_means": movie_means, "global_mean": global_mean}
         os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
         with open(args.model_path, "wb") as f:
             pickle.dump(model_data, f)

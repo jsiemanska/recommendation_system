@@ -57,12 +57,17 @@ def _fill_only(train_file, user_map, movie_map):
 
 
 def train_nmf_model(train_file, n_components):
+    df = pd.read_csv(train_file)
     Z, _, user_map, movie_map = build_rating_matrix(train_file)
     model = NMF(n_components=n_components, init="random", random_state=0, max_iter=10_000)
     W = model.fit_transform(Z)
     H = model.components_
     Z_approx = np.clip(np.dot(W, H), 1, 5)
-    return Z_approx, user_map, movie_map
+    user_means  = df.groupby("userId")["rating"].mean().to_dict()
+    movie_means = df.groupby("movieId")["rating"].mean().to_dict()
+    global_mean = float(df["rating"].mean())  
+
+    return Z_approx, user_map, movie_map, user_means, movie_means, global_mean
 
 def train_masked_nmf(Z, mask, n_components=20, n_iter=50):
     """
@@ -88,6 +93,7 @@ def train_masked_nmf(Z, mask, n_components=20, n_iter=50):
     return Z_work, W, H
 
 def train_svd1_model(train_file, n_components):
+    df = pd.read_csv(train_file)
     Z, _, user_map, movie_map = build_rating_matrix(train_file)
     
     svd = TruncatedSVD(n_components=n_components, random_state=42, n_iter=3)
@@ -99,7 +105,11 @@ def train_svd1_model(train_file, n_components):
     H = np.dot(Sigma2, VT)
     
     Z_approx = np.clip(np.dot(W, H), 1, 5)
-    return Z_approx, user_map, movie_map
+    global_mean = float(df["rating"].mean())
+    user_means  = df.groupby("userId")["rating"].mean().to_dict()
+    movie_means = df.groupby("movieId")["rating"].mean().to_dict()
+
+    return Z_approx, user_map, movie_map, user_means, movie_means, global_mean
 
 def find_optimal_r_svd1(train_file, r_candidates=[90,95]):
     best_overall = {"rmse": float("inf"), "strategy": "weighted"}
