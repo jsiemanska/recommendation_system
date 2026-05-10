@@ -1,6 +1,6 @@
 import numpy as np
 from modules.check_ratings import check_ratings
-from modules.train import find_optimal_r, train_nmf_model, find_optimal_r_svd1, train_svd1_model
+from modules.train import find_optimal_r, train_nmf_model, find_optimal_r_svd1, train_svd1_model, find_optimal_r_svd2, train_svd2_model, find_optimal_r_sgd, train_sgd_model
 import argparse
 import os
 import pickle
@@ -26,21 +26,32 @@ def main():
     mode = args.mode.lower()
     alg  = args.alg.upper()
 
-    if alg not in ("NMF", "SVD1"):
-        print(f"Algorithm '{alg}' not implemented. Use NMF or SVD1.")
+    if alg not in ("NMF", "SVD1", "SVD2", "SGD"):
+        print(f"Algorithm '{alg}' not implemented. Use NMF, SVD1, SVD2, or SGD.")
         return
 
     if mode == "train":
         print(f"Training mode activated ({alg}).")
 
         if alg == "NMF":
-            r= find_optimal_r(args.train_file, r_candidates=[25])
+            r = find_optimal_r(args.train_file, r_candidates=[25])
             Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_nmf_model(args.train_file, r)
 
         elif alg == "SVD1":
-            r= find_optimal_r_svd1(args.train_file, r_candidates=[50,55,60])
+            r = find_optimal_r_svd1(args.train_file, r_candidates=[50,55,60])
             Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_svd1_model(args.train_file, r)
+            
+        elif alg == "SVD2":
+            r = find_optimal_r_svd2(args.train_file, r_candidates=np.arange(10, 61, 2))
+            Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_svd2_model(args.train_file, r)
+            
+        
+        elif alg == "SGD":
+            r = find_optimal_r_sgd(args.train_file, r_candidates=np.arange(10, 61, 2))
+            Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_sgd_model(args.train_file, n_factors=r)
+            
 
+        print("Trening zakończony, zapisuję model...")
         model_data = {"Z_approx": Z_approx, "user_map": user_map, "movie_map": movie_map, "user_means": user_means, "movie_means": movie_means, "global_mean": global_mean}
         os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
         with open(args.model_path, "wb") as f:
