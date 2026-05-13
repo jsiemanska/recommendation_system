@@ -1,6 +1,8 @@
 import numpy as np
 from modules.check_ratings import check_ratings
-from modules.train import find_optimal_r, train_nmf_model, find_optimal_r_svd1, train_svd1_model, find_optimal_r_svd2, train_svd2_model, find_optimal_r_sgd, train_sgd_model
+from modules.train import (find_optimal_r, train_nmf_model, find_optimal_r_svd1, train_svd1_model, 
+                           find_optimal_r_svd2, train_svd2_model, find_optimal_r_sgd, train_sgd_model,
+                           find_optimal_hybrid, train_hybrid_svd_sgd_improved)
 import argparse
 import os
 import pickle
@@ -9,9 +11,15 @@ from modules.predict import predict
 #żeby odpalić test python main.py --mode predict --input_file data/ratings_test_no_ratings.csv --model_path models_trained/model_NMF.pkl --output_file results/preds.csv --alg NMF   
 
 #żeby odpalić predict python main.py --mode train --train_file data/ratings_train.csv --model_path models_trained/model_NMF.pkl --alg NMF 
+#żeby odpalić SGD_IMPROVED: python main.py --mode train --train_file data/ratings_train.csv --model_path models_trained/model_SGD_IMPROVED.pkl --alg SGD_IMPROVED
+#żeby odpalić HYBRID: python main.py --mode train --train_file data/ratings_train.csv --model_path models_trained/model_HYBRID.pkl --alg HYBRID
+#żeby odpalić HYBRID_TUNED: python main.py --mode train --train_file data/ratings_train.csv --model_path models_trained/model_HYBRID_TUNED.pkl --alg HYBRID_TUNED
+#żeby odpalić NMF_TUNED: python main.py --mode train --train_file data/ratings_train.csv --model_path models_trained/model_NMF_TUNED.pkl --alg NMF_TUNED
+#żeby odpalić SVD1_TUNED: python main.py --mode train --train_file data/ratings_train.csv --model_path models_trained/model_SVD1_TUNED.pkl --alg SVD1_TUNED
+#żeby odpalić SVD2_TUNED: python main.py --mode train --train_file data/ratings_train.csv --model_path models_trained/model_SVD2_TUNED.pkl --alg SVD2_TUNED
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Simple NMF/SVD1-based Recommender")
+    parser = argparse.ArgumentParser(description="Recommender System with Multiple Algorithms")
     parser.add_argument("--mode", type=str, required=True)
     parser.add_argument("--train_file", type=str, default="data/ratings_train.csv")
     parser.add_argument("--input_file", type=str, default="data/ratings_test_no_ratings.csv")
@@ -26,8 +34,8 @@ def main():
     mode = args.mode.lower()
     alg  = args.alg.upper()
 
-    if alg not in ("NMF", "SVD1", "SVD2", "SGD"):
-        print(f"Algorithm '{alg}' not implemented. Use NMF, SVD1, SVD2, or SGD.")
+    if alg not in ("NMF", "SVD1", "SVD2", "SGD", "BEST"):
+        print(f"Algorithm '{alg}' not implemented. Use NMF, SVD1, SVD2, SGD or BEST.")
         return
 
     if mode == "train":
@@ -42,15 +50,41 @@ def main():
             Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_svd1_model(args.train_file, r)
             
         elif alg == "SVD2":
-            r = find_optimal_r_svd2(args.train_file, r_candidates=np.arange(10, 61, 2))
+            r = find_optimal_r_svd2(args.train_file, r_candidates=np.arange(10, 30, 5))
             Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_svd2_model(args.train_file, r)
             
-        
         elif alg == "SGD":
-            r = find_optimal_r_sgd(args.train_file, r_candidates=np.arange(10, 61, 2))
+            r = find_optimal_r_sgd(args.train_file, r_candidates=np.arange(10, 40, 5))
             Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_sgd_model(args.train_file, n_factors=r)
+        
+        elif alg == "BEST":
+            best_params = find_optimal_hybrid(
+                args.train_file,
+                n_factors_candidates=[45,60],  
+                svd_weight_candidates=[0.2,0.3], 
+                learning_rates=[0.02],
+                regs=[0.02], 
+                epochs=25,
+                lr_decay=0.98,
+                damping=1.0     
+            )
             
-
+            
+            print(f"\nTraining final model with best params: {best_params}")
+            Z_approx, user_map, movie_map, user_means, movie_means, global_mean = train_hybrid_svd_sgd_improved(
+                args.train_file,
+                n_factors=best_params["n_factors"],
+                svd_weight=best_params["svd_weight"],
+                learning_rate=best_params["lr"],
+                reg=best_params["reg"],
+                epochs=25,
+                lr_decay=0.98,
+                damping=1.0
+            )
+            
+            
+        
+            
         print("Trening zakończony, zapisuję model...")
         model_data = {"Z_approx": Z_approx, "user_map": user_map, "movie_map": movie_map, "user_means": user_means, "movie_means": movie_means, "global_mean": global_mean}
         os.makedirs(os.path.dirname(args.model_path), exist_ok=True)

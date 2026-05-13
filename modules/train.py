@@ -318,3 +318,150 @@ def find_optimal_r_sgd(train_file, r_candidates=np.arange(10, 101, 5),
             best_r = r
     print(f"Best r for SGD: {best_r} (RMSE={best_rmse:.4f})")
     return best_r
+
+
+def train_hybrid_svd_sgd_improved(train_file, n_factors=50, svd_weight=0.4, learning_rate=0.01,
+                                 reg=0.02, epochs=40, lr_decay=0.98,
+                                 damping=5.0):
+    """Improved hybrid model: blend SVD2 decomposition with SGD personalized factors."""
+    df = pd.read_csv(train_file)
+    Z, _, user_map, movie_map = build_rating_matrix(train_file)
+    unique_users = sorted(df["userId"].unique())
+    unique_movies = sorted(df["movieId"].unique())
+    n_users, n_movies = len(user_map), len(movie_map)
+
+    U, s, Vt = np.linalg.svd(Z, full_matrices=False)
+    U_r = U[:, :n_factors]
+    s_r = s[:n_factors]
+    Vt_r = Vt[:n_factors, :]
+    Z_svd = U_r @ np.diag(s_r) @ Vt_r
+
+    global_mean = df["rating"].mean()
+    bu = np.zeros(n_users)
+    bi = np.zeros(n_movies)
+    np.random.seed(42)
+    P = np.random.normal(0, 0.01, (n_users, n_factors))
+    Q = np.random.normal(0, 0.01, (n_movies, n_factors))
+
+    ratings = [(user_map[r.userId], movie_map[r.movieId], r.rating) for r in df.itertuples()]
+    current_lr = learning_rate
+
+    for epoch in range(epochs):
+        np.random.shuffle(ratings)
+        total_err = 0.0
+        for u, m, r in ratings:
+            svd_pred = Z_svd[u, m]
+            sgd_pred = global_mean + bu[u] + bi[m] + np.dot(P[u], Q[m])
+            pred = svd_weight * svd_pred + (1 - svd_weight) * sgd_pred
+            err = r - pred
+            total_err += err ** 2
+
+            bu[u] += current_lr * (err - (reg * bu[u]) / (damping + 1))
+            bi[m] += current_lr * (err - (reg * bi[m]) / (damping + 1))
+            P[u] += current_lr * (err * Q[m] - reg * P[u])
+            Q[m] += current_lr * (err * P[u] - reg * Q[m])
+
+        rmse = np.sqrt(total_err / len(ratings))
+        current_lr *= lr_decay
+        print(f"Epoch {epoch+1}/{epochs}, RMSE: {rmse:.4f}, LR: {current_lr:.6f}")
+
+    Z_approx = np.zeros((n_users, n_movies))
+    for u in range(n_users):
+        for m in range(n_movies):
+            svd_pred = Z_svd[u, m]
+            sgd_pred = global_mean + bu[u] + bi[m] + np.dot(P[u], Q[m])
+            pred = svd_weight * svd_pred + (1 - svd_weight) * sgd_pred
+            Z_approx[u, m] = np.clip(pred, 1, 5)
+
+    user_means = df.groupby("userId")["rating"].mean().to_dict()
+    movie_means = df.groupby("movieId")["rating"].mean().to_dict()
+    global_mean = float(df["rating"].mean())
+    return Z_approx, user_map, movie_map, user_means, movie_means, global_mean
+
+
+def find_optimal_hybrid(train_file,
+                        n_factors_candidates=[20, 30, 40, 50, 60],
+                        svd_weight_candidates=[0.2, 0.3, 0.4, 0.5, 0.6],
+                        learning_rates=[0.005, 0.01, 0.02],
+                        regs=[0.01, 0.02, 0.03],
+                        epochs=20,
+                        lr_decay=0.98,
+                        damping=5.0):
+    """Grid search for improved hybrid model parameters."""
+    df = pd.read_csv(train_file)
+    unique_users = sorted(df["userId"].unique())
+    unique_movies = sorted(df["movieId"].unique())
+    user_map = {uid: i for i, uid in enumerate(unique_users)}
+    movie_map = {mid: j for j, mid in enumerate(unique_movies)}
+    n_users, n_movies = len(user_map), len(movie_map)
+
+    all_ratings = [(user_map[r.userId], movie_map[r.movieId], r.rating) for r in df.itertuples()]
+    np.random.seed(42)
+    np.random.shuffle(all_ratings)
+    split = int(0.8 * len(all_ratings))
+    train_ratings = all_ratings[:split]
+    val_ratings = all_ratings[split:]
+
+    Z, _, _, _ = build_rating_matrix(train_file)
+    best_params = {"rmse": float("inf")}
+
+    print("\n" + "="*80)
+    print("GRID SEARCH: HYBRID SVD + SGD Hyperparameter Tuning")
+    print("="*80)
+    print(f"{'n_factors':<10} {'svd_w':<8} {'lr':<8} {'reg':<8} {'Val RMSE':<10}")
+    print("-"*54)
+
+    for n_factors in n_factors_candidates:
+        U, s, Vt = np.linalg.svd(Z, full_matrices=False)
+        U_r = U[:, :n_factors]
+        s_r = s[:n_factors]
+        Vt_r = Vt[:n_factors, :]
+        Z_svd_base = U_r @ np.diag(s_r) @ Vt_r
+
+        for svd_weight in svd_weight_candidates:
+            for lr in learning_rates:
+                for reg in regs:
+                    bu = np.zeros(n_users)
+                    bi = np.zeros(n_movies)
+                    np.random.seed(42)
+                    P = np.random.normal(0, 0.01, (n_users, n_factors))
+                    Q = np.random.normal(0, 0.01, (n_movies, n_factors))
+                    current_lr = lr
+
+                    for _ in range(epochs):
+                        np.random.shuffle(train_ratings)
+                        for u, m, r in train_ratings:
+                            base = Z_svd_base[u, m]
+                            residual = r - base
+                            pred_residual = bu[u] + bi[m] + np.dot(P[u], Q[m])
+                            err = residual - pred_residual
+                            bu[u] += current_lr * (err - (reg * bu[u]) / (damping + 1))
+                            bi[m] += current_lr * (err - (reg * bi[m]) / (damping + 1))
+                            P[u] += current_lr * (err * Q[m] - reg * P[u])
+                            Q[m] += current_lr * (err * P[u] - reg * Q[m])
+                        current_lr *= lr_decay
+
+                    errors = []
+                    for u, m, r in val_ratings:
+                        base = Z_svd_base[u, m]
+                        pred = base + bu[u] + bi[m] + np.dot(P[u], Q[m])
+                        pred = np.clip(pred, 1, 5)
+                        errors.append((r - pred) ** 2)
+                    rmse = np.sqrt(np.mean(errors))
+
+                    print(f"{n_factors:<10} {svd_weight:<8} {lr:<8} {reg:<8} {rmse:.4f}")
+                    if rmse < best_params["rmse"]:
+                        best_params = {
+                            "rmse": rmse,
+                            "n_factors": n_factors,
+                            "svd_weight": svd_weight,
+                            "lr": lr,
+                            "reg": reg
+                        }
+
+    print("="*80)
+    print(f"BEST PARAMS: n_factors={best_params['n_factors']}, svd_weight={best_params['svd_weight']}, lr={best_params['lr']}, reg={best_params['reg']}, RMSE={best_params['rmse']:.4f}")
+    print("="*80)
+    return best_params
+
+
